@@ -90,6 +90,228 @@ Query: 1593 -> 4835
   Time: 0.42 ms
 ```
 
+---
+
+## 🌐 Web Application
+
+An interactive web application for visualizing shortest paths on a map. The application provides a click-based interface to select source and destination points, then displays the computed route overlaid on the road network.
+
+### Architecture
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Streamlit UI    │────▶│   FastAPI        │────▶│ C++ Query Engine │
+│  (Port 8501)     │     │   (Port 8000)    │     │ (dijkstra-on-    │
+│  - Map rendering │     │  - Spatial index │     │  Hierarchy)      │
+│  - Click events  │     │  - Route API     │     │  - Sub-ms query  │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+```
+
+### Quick Start with Docker
+
+```bash
+cd routing-pipeline
+docker-compose up --build
+```
+
+**Access:**
+- 🗺️ Web Interface: http://localhost:8501
+- 📚 API Documentation: http://localhost:8000/docs
+
+### Manual Setup (Development)
+
+**Prerequisites:**
+- Python 3.10+
+- C++ query engine built (`dijkstra-on-Hierarchy/build/shortcut_router`)
+
+**Steps:**
+
+1. **Build C++ query engine:**
+   ```bash
+   cd ../dijkstra-on-Hierarchy
+   ./build_cpp.sh
+   cd ../routing-pipeline
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r api/requirements.txt
+   pip install -r app/requirements.txt
+   ```
+
+3. **Configure datasets** (edit `config/datasets.yaml`):
+   ```yaml
+   datasets:
+     - name: "Somerset"
+       shortcuts_path: "../spark-shortest-path/output/Somerset_shortcuts_final"
+       edges_path: "../osm-to-road-network/data/output/Somerset_driving_simplified_edges_with_h3.csv"
+       binary_path: "../dijkstra-on-Hierarchy/build/shortcut_router"
+   ```
+
+4. **Create and activate virtual environment:**
+   ```bash
+   # Create virtual environment
+   python -m venv venv
+   
+   # Activate it
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # Install all dependencies
+   pip install -r api/requirements.txt
+   pip install -r app/requirements.txt
+   ```
+
+5. **Start the API server:**
+   ```bash
+   # Make sure virtual environment is activated
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # Start the API server
+   python -m uvicorn api.server:app --host 0.0.0.0 --port 8000
+   ```
+   
+   The API will be available at http://localhost:8000
+   - Swagger docs: http://localhost:8000/docs
+   - Available endpoints:
+     - `GET /datasets` - List available datasets
+     - `GET /route` - Compute shortest path
+
+6. **Start the Streamlit web app** (in a new terminal):
+   ```bash
+   # Activate virtual environment
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # Start Streamlit
+   streamlit run app/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+   ```
+   
+   The web app will be available at http://localhost:8501
+
+7. **Using the web interface:**
+   - Select a dataset (Somerset or Burnaby) from the dropdown
+   - Click on the map to set the **source** point
+   - Click again to set the **destination** point
+   - Click "🚀 Compute Route" to calculate and visualize the path
+   - Expand "📋 View Edge List" to see the complete list of edge IDs
+   - The map shows the fully expanded path with all base edges
+
+### Alternative: Using Shell Scripts
+
+**Start API server** (Terminal 1):
+   ```bash
+   ./start_api.sh
+   ```
+
+**Start Streamlit** (Terminal 2):
+   ```bash
+   ./start_streamlit.sh
+   # or manually:
+   # streamlit run app/streamlit_app.py
+   ```
+
+### Usage
+
+1. Open http://localhost:8501 in your browser
+2. Select a dataset from the sidebar dropdown (Somerset or Burnaby)
+3. **Click on the map** to set the source location (green marker appears)
+4. **Click again** to set the destination location (red marker appears)
+5. Click the **"Compute Route"** button
+6. View the shortest path visualization and statistics:
+   - Distance (meters)
+   - Query runtime (milliseconds)
+   - Number of edges in path
+   - Interactive route overlay with edge details
+
+### Features
+
+- ✅ **Interactive Map**: Folium-based OpenStreetMap with click-to-select
+- ✅ **Multi-Dataset Support**: Switch between different regions/datasets
+- ✅ **Real-Time Routing**: Sub-second path computation using C++ engine
+- ✅ **Path Visualization**: Expanded base edge path displayed with road metadata
+- ✅ **Statistics Dashboard**: Distance, runtime, and path composition
+- ✅ **Spatial Indexing**: R-tree for fast nearest-edge queries
+- ✅ **REST API**: Programmatic access to routing functionality
+
+### API Endpoints
+
+The FastAPI backend provides the following endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | API information and health check |
+| `/datasets` | GET | List available datasets with bounds |
+| `/nearest-edge` | GET | Find nearest edge to lat/lon coordinates |
+| `/route` | GET | Compute shortest path between two points |
+
+**Example API calls:**
+
+```bash
+# List datasets
+curl http://localhost:8000/datasets
+
+# Find nearest edge
+curl "http://localhost:8000/nearest-edge?lat=37.092&lon=-84.608&dataset=Somerset"
+
+# Compute route
+curl "http://localhost:8000/route?source_lat=37.092&source_lon=-84.608&target_lat=37.095&target_lon=-84.605&dataset=Somerset"
+```
+
+### Configuration
+
+Add new datasets by editing `config/datasets.yaml`:
+
+```yaml
+datasets:
+  - name: "YourCity"
+    shortcuts_path: "/path/to/shortcuts.parquet"
+    edges_path: "/path/to/edges_with_h3.csv"
+    binary_path: "/path/to/shortcut_router"
+    description: "Your City Description"
+```
+
+**Required files:**
+- **Shortcuts**: Parquet directory from `spark-shortest-path` (Stage 2)
+- **Edges**: CSV file from `osm-to-road-network` (Stage 1) with `id`, `geometry` (WKT), `length`, `highway` columns
+- **Binary**: Compiled C++ query engine from `dijkstra-on-Hierarchy` (Stage 3)
+
+### Technology Stack
+
+- **Frontend**: Streamlit, Folium (Leaflet.js wrapper)
+- **Backend**: FastAPI, Uvicorn
+- **Spatial**: Shapely, RTree (libspatialindex)
+- **Data Processing**: Pandas, PyYAML
+- **Query Engine**: C++20, Apache Arrow/Parquet, libh3
+- **Deployment**: Docker, Docker Compose
+
+### Troubleshooting
+
+**C++ Binary Not Found:**
+```bash
+cd ../dijkstra-on-Hierarchy
+./build_cpp.sh
+```
+
+**Dataset Loading Errors:**
+```bash
+# Verify paths in config/datasets.yaml exist
+ls -l /path/to/shortcuts.parquet
+ls -l /path/to/edges.csv
+```
+
+**API Connection Issues:**
+- Ensure API is running on port 8000
+- Check firewall settings
+- Verify `API_BASE_URL` in Streamlit app
+
+**Port Already in Use:**
+```bash
+# Change ports in docker-compose.yml or startup scripts
+# API: default 8000
+# Streamlit: default 8501
+```
+
+---
+
 ## 📊 Data Flow
 
 ```

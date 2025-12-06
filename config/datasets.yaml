@@ -1,0 +1,15 @@
+# Dataset Configuration
+# Define available datasets with paths to shortcuts, edges, and query binary
+
+datasets:
+  - name: "Somerset"
+    shortcuts_path: "../spark-shortest-path/output/Somerset_shortcuts_final"
+    edges_path: "../spark-shortest-path/data/Somerset_driving_simplified_edges_with_h3.csv"
+    binary_path: "../dijkstra-on-Hierarchy/build/shortcut_router"
+    description: "Somerset, Kentucky, USA"
+  
+  - name: "Burnaby"
+    shortcuts_path: "../spark-shortest-path/output/Burnaby_shortcuts_final"
+    edges_path: "../osm-to-road-network/data/output/Burnaby_driving_simplified_edges_with_h3.csv"
+    binary_path: "../dijkstra-on-Hierarchy/cpp/build/shortcut_router"
+    description: "Burnaby, British Columbia, Canada"
