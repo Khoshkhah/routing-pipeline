@@ -67,9 +67,32 @@ class CHQueryEngine:
         self.edges_path = str(Path(edges_path).resolve())
         self.binary_path = Path(binary_path).resolve()
         self.timeout = timeout
+        self._supports_multi_query = None  # Cache for binary capabilities
         
         if not self.binary_path.exists():
             raise FileNotFoundError(f"Query binary not found: {self.binary_path}")
+    
+    def _check_multi_query_support(self) -> bool:
+        """Check if binary supports multi-query arguments."""
+        if self._supports_multi_query is not None:
+            return self._supports_multi_query
+        
+        try:
+            # Run binary with --help to check available options
+            result = subprocess.run(
+                [str(self.binary_path), "--help"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            # Check if new multi-query arguments are supported
+            output = result.stdout + result.stderr
+            self._supports_multi_query = "--sources" in output and "--optimized" in output
+            return self._supports_multi_query
+        except Exception:
+            # If we can't determine, assume old binary
+            self._supports_multi_query = False
+            return False
     
     def query(
         self,
@@ -168,6 +191,11 @@ class CHQueryEngine:
                 error="target_edges and target_distances must have same length"
             )
         
+        # Check if binary supports multi-query
+        if not self._check_multi_query_support():
+            # Fall back to individual queries for old binaries
+            return self._query_multi_fallback(source_edges, target_edges, source_distances, target_distances)
+        
         cmd = [
             str(self.binary_path),
             "--shortcuts", self.shortcuts_path,
@@ -207,6 +235,47 @@ class CHQueryEngine:
                 success=False,
                 error=f"Query error: {e}"
             )
+    
+    def _query_multi_fallback(
+        self,
+        source_edges: List[int],
+        target_edges: List[int],
+        source_distances: List[float],
+        target_distances: List[float]
+    ) -> QueryResult:
+        """
+        Fallback implementation for old binaries without multi-query support.
+        Tests all source×target combinations using individual queries.
+        """
+        best_distance = float('inf')
+        best_path = None
+        best_runtime = 0
+        
+        for i, source_edge in enumerate(source_edges):
+            for j, target_edge in enumerate(target_edges):
+                result = self.query(source_edge, target_edge)
+                
+                if result.success and result.distance is not None:
+                    # Add approach distances
+                    total_distance = source_distances[i] + result.distance + target_distances[j]
+                    
+                    if total_distance < best_distance:
+                        best_distance = total_distance
+                        best_path = result.path
+                        best_runtime = result.runtime_ms
+        
+        if best_path is None:
+            return QueryResult(
+                success=False,
+                error="No path found between source and target sets"
+            )
+        
+        return QueryResult(
+            success=True,
+            distance=best_distance,
+            runtime_ms=best_runtime,
+            path=best_path
+        )
     
     def _parse_output(self, output: str) -> QueryResult:
         """

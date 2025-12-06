@@ -154,11 +154,11 @@ html_code = f"""
             </div>
             <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="radius-container">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Search Radius (m)</label>
-                <input type="number" id="search-radius" value="500" min="50" max="5000" step="50" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+                <input type="number" id="search-radius" value="500" min="50" max="2000" step="50" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
             </div>
             <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="knn-container" style="display: none;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">K (Number of Candidates)</label>
-                <input type="number" id="num-candidates" value="5" min="1" max="50" step="1" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+                <input type="number" id="num-candidates" value="5" min="1" max="20" step="1" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
             </div>
             <div style="padding: 10px; border-bottom: 1px solid #ddd;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Dataset</label>
@@ -291,8 +291,13 @@ html_code = f"""
                 }}
                 
                 // Display distance and query time
-                document.getElementById('disp-dist').innerText = (dist > 1000) ? (dist/1000).toFixed(2) + ' km' : dist.toFixed(0) + ' m';
-                document.getElementById('disp-time').innerText = runtime.toFixed(2) + ' ms';
+                if (data.success === false) {{
+                    document.getElementById('disp-time').innerText = "No route";
+                    document.getElementById('disp-dist').innerText = data.error || "Path not found";
+                }} else {{
+                    document.getElementById('disp-dist').innerText = (dist > 1000) ? (dist/1000).toFixed(2) + ' km' : dist.toFixed(0) + ' m';
+                    document.getElementById('disp-time').innerText = runtime.toFixed(2) + ' ms';
+                }}
             }} catch (e) {{
                 console.error("Routing error:", e);
                 document.getElementById('disp-time').innerText = "API Error";
