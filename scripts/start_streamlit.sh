@@ -9,10 +9,10 @@ echo "Starting Streamlit web application..."
 echo ""
 
 # Activate virtual environment
-source venv/bin/activate
+source ../venv/bin/activate
 
-# Change to app directory (like the working direct command)
-cd app
+# Change to app directory
+cd ../app
 
 # Run streamlit (without port/address flags that cause issues)
 streamlit run streamlit_app.py
