@@ -4,28 +4,27 @@ A complete end-to-end pipeline for building and querying Contraction Hierarchies
 
 ## 🎯 Overview
 
-This pipeline transforms raw OpenStreetMap data into a production-ready shortest-path query system. It consists of three specialized repositories that work together:
+This pipeline transforms raw OpenStreetMap data into a production-ready shortest-path query system. It consists of **four core projects** that work together:
 
-```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│ osm-to-road-network │────▶│ spark-shortest-path │────▶│dijkstra-on-Hierarchy│
-│                     │     │                     │     │                     │
-│  • OSM PBF parsing  │     │  • PySpark CH build │     │  • C++ query engine │
-│  • H3 indexing      │     │  • Hierarchy-aware  │     │  • Bidirectional    │
-│  • Turn restrictions│     │    shortest paths   │     │    Dijkstra         │
-│  • Speed inference  │     │  • Parquet output   │     │  • Sub-ms latency   │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-        Stage 1                    Stage 2                    Stage 3
-       EXTRACT                   PREPROCESS                   QUERY
+```mermaid
+graph LR
+    A[osm-to-road-network] -->|Edges & Graph| B[spark-shortest-path]
+    B -->|Shortcuts| D[routing-server]
+    A -->|Edges & Geometry| D
+    C[dijkstra-on-Hierarchy] -.->|Lib| D
+    D -->|HTTP API| E[routing-pipeline]
+    E -->|UI| User
 ```
 
-## 📦 Repositories
+## 📦 Project Components
 
-| Stage | Repository | Description | Language |
-|-------|------------|-------------|----------|
-| 1 | [osm-to-road-network](https://github.com/khoshkhah/osm-to-road-network) | Converts OSM data to road network with H3 indexing | Python |
-| 2 | [spark-shortest-path](https://github.com/khoshkhah/spark-shortest-path) | Builds Contraction Hierarchy shortcuts at scale | PySpark |
-| 3 | [dijkstra-on-Hierarchy](https://github.com/khoshkhah/dijkstra-on-Hierarchy) | Production C++ query engine | C++20 |
+| Stage | Project | Description | Tech Stack |
+|-------|---------|-------------|------------|
+| 1 | [osm-to-road-network](../osm-to-road-network) | **Extraction**: Converts OSM data to road network with H3 indexing. | Python, OSMnx |
+| 2 | [spark-shortest-path](../spark-shortest-path) | **Preprocessing**: Builds Contraction Hierarchy shortcuts at scale. | PySpark, GraphFrames |
+| 3 | [dijkstra-on-Hierarchy](../dijkstra-on-Hierarchy) | **Core Algorithm**: The C++ library implementing CH routing logic. | C++20 |
+| 4 | [routing-server](../routing-server) | **Serving**: High-performance HTTP server hosting the routing engine. | C++, Crow, Boost |
+| App | [routing-pipeline](./) | **Application**: Python API Gateway and Streamlit UI. | FastAPI, Streamlit |
 
 ## 🚀 Quick Start
 
@@ -65,73 +64,38 @@ python src/shortest_path_hybrid.py \
 **Output:**
 - `shortcuts.parquet` - Contraction Hierarchy shortcuts with via_edge for expansion
 
-### Step 3: Query Shortest Paths
+### Step 3: Build Core Library
 
 ```bash
 git clone https://github.com/khoshkhah/dijkstra-on-Hierarchy.git
 cd dijkstra-on-Hierarchy
-
-# Build (requires conda environment or system packages)
 ./build_cpp.sh
-
-# Query
-./run_cpp.sh \
-    --shortcuts ../spark-shortest-path/output/shortcuts.parquet \
-    --edges ../osm-to-road-network/data/output/Somerset_driving_simplified_edges_with_h3.csv \
-    --source 1593 --target 4835
 ```
 
-**Output:**
-```
-Query: 1593 -> 4835
-  Distance: 2847.32
-  Path (shortcuts): [1593, 2041, 3892, 4835]
-  Path (expanded):  [1593, 1594, 1601, 2041, 2042, 3890, 3891, 3892, 4835]
-  Time: 0.42 ms
-```
+### Step 4: Start Routing Server
 
----
+```bash
+git clone https://github.com/khoshkhah/routing-server.git
+cd routing-server
 
-## 🌐 Web Application
-
-An interactive web application for visualizing shortest paths on a map. The application provides a click-based interface to select source and destination points, then displays the computed route overlaid on the road network.
-
-### Architecture
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Streamlit UI    │────▶│   FastAPI        │────▶│ C++ Query Engine │
-│  (Port 8501)     │     │   (Port 8000)    │     │ (dijkstra-on-    │
-│  - Map rendering │     │  - Spatial index │     │  Hierarchy)      │
-│  - Click events  │     │  - Route API     │     │  - Sub-ms query  │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
+# Build and Run
+./scripts/build.sh
+./scripts/run.sh
+# Server starts on localhost:8080
 ```
 
-### Quick Start with Docker
+### Step 5: Run Application
 
 ```bash
 cd routing-pipeline
-docker-compose up --build
+
+# Install deps
+pip install -r api/requirements.txt
+pip install -r app/requirements.txt
+
+# Start Streamlit UI
+streamlit run app/streamlit_app.py
 ```
-
-**Access:**
-- 🗺️ Web Interface: http://localhost:8501
-- 📚 API Documentation: http://localhost:8000/docs
-
-### Manual Setup (Development)
-
-**Prerequisites:**
-- Python 3.10+
-- C++ query engine built (`dijkstra-on-Hierarchy/build/shortcut_router`)
-
-**Steps:**
-
-1. **Build C++ query engine:**
-   ```bash
-   cd ../dijkstra-on-Hierarchy
-   ./build_cpp.sh
-   cd ../routing-pipeline
-   ```
 
 2. **Install dependencies:**
    ```bash

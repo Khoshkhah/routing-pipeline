@@ -30,7 +30,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION: PUT YOUR API URL HERE ---
-API_URL = "http://localhost:8000/route" 
+# Original FastAPI server
+# API_URL = "http://192.168.1.152:8000/route"
+
+# New routing-server-v2 (C++ server) - uncomment to test
+# API_URL = "http://localhost:8080/route"
+
+# Use routing-pipeline Python API (Gateway to C++ server)
+API_URL = "http://localhost:8000/route"
+
 # For testing: API_URL = "https://router.project-osrm.org/route/v1/driving" 
 
 # --- JAVASCRIPT & HTML APPLICATION (Unchanged Logic) ---
@@ -181,6 +189,7 @@ html_code = f"""
                 <div class="stat-time" id="disp-time">0 min</div>
                 <div class="stat-dist" id="disp-dist">0 km</div>
             </div>
+            <div style="margin-top: 10px; font-size: 10px; color: #999;" id="debug-info">Ready</div>
         </div>
     </div>
     
@@ -250,18 +259,28 @@ html_code = f"""
             const searchRadius = document.getElementById('search-radius').value;
             const numCandidates = document.getElementById('num-candidates').value;
 
-            // Build URL based on search mode
-            let url = `{API_URL}?source_lat=${{latA}}&source_lon=${{lonA}}&target_lat=${{latB}}&target_lon=${{lonB}}&dataset=${{dataset}}`;
-            
-            if (searchMode === 'radius') {{
-                url += `&search_mode=radius&search_radius=${{searchRadius}}&num_candidates=${{numCandidates}}`;
-            }} else {{
-                url += `&search_mode=knn&num_candidates=${{numCandidates}}`;
-            }}
+            // Prepare query parameters for routing-pipeline Python API (GET)
+            const params = new URLSearchParams({{
+                dataset: dataset,
+                source_lat: latA,
+                source_lon: lonA,
+                target_lat: latB,
+                target_lon: lonB,
+                search_radius: searchRadius,
+                num_candidates: numCandidates,
+                search_mode: searchMode
+            }});
 
             try {{
-                const response = await fetch(url);
+                // Use backticks for template literal in JS, but escape braces for Python f-string
+                const response = await fetch(`{API_URL}?${{params.toString()}}`, {{
+                    method: 'GET',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }}
+                }});
                 const data = await response.json();
+                console.log("API Response:", data);
                 
                 if (routeLayer) map.removeLayer(routeLayer);
 
@@ -269,19 +288,40 @@ html_code = f"""
                 var dist = 0;
                 var runtime = 0;
 
-                // Parse shortest path engine response (GeoJSON format)
-                if (data.geojson && data.geojson.features && data.geojson.features.length > 0) {{
-                    data.geojson.features.forEach(feature => {{
-                        if (feature.geometry.type === 'LineString') {{
-                            feature.geometry.coordinates.forEach(coord => {{
-                                routeCoords.push([coord[1], coord[0]]); // GeoJSON is [lon,lat], Leaflet needs [lat,lon]
+                // Parse routing-server-v2 response
+                var routeCoords = [];
+                var dist = 0;
+                var runtime = 0;
+
+                if (data.success) {{
+                    // Python API returns flat structure: {{success: true, geojson: {{...}}, distance: ...}}
+                    
+                    // Extract GeoJSON coordinates
+                    if (data.geojson) {{
+                        const geojson = data.geojson;
+                        
+                        // Handle FeatureCollection
+                        if (geojson.type === 'FeatureCollection' && geojson.features) {{
+                            geojson.features.forEach(feature => {{
+                                if (feature.geometry.type === 'LineString') {{
+                                    feature.geometry.coordinates.forEach(coord => {{
+                                        routeCoords.push([coord[1], coord[0]]);
+                                    }});
+                                }}
+                            }});
+                        }} 
+                        // Handle single Feature (returned by routing-server)
+                        else if (geojson.type === 'Feature' && geojson.geometry && geojson.geometry.type === 'LineString') {{
+                            geojson.geometry.coordinates.forEach(coord => {{
+                                routeCoords.push([coord[1], coord[0]]);
                             }});
                         }}
-                    }});
+                    }}
+                    
                     dist = data.distance || 0;
                     runtime = data.runtime_ms || 0;
                 }}
-
+                
                 if (routeCoords.length > 0) {{
                     routeLayer = L.polyline(routeCoords, {{
                         color: '#0066cc', 
@@ -297,11 +337,15 @@ html_code = f"""
                 }} else {{
                     document.getElementById('disp-dist').innerText = (dist > 1000) ? (dist/1000).toFixed(2) + ' km' : dist.toFixed(0) + ' m';
                     document.getElementById('disp-time').innerText = runtime.toFixed(2) + ' ms';
+                    
+                    // DEBUG: Show info in UI
+                    document.getElementById('debug-info').innerText = "Points: " + routeCoords.length + " | Dist: " + dist;
                 }}
             }} catch (e) {{
                 console.error("Routing error:", e);
                 document.getElementById('disp-time').innerText = "API Error";
                 document.getElementById('disp-dist').innerText = "Check Console";
+                document.getElementById('debug-info').innerText = "Error: " + e.message;
             }} finally {{
                 loader.style.display = 'none';
             }}

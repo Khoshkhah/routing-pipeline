@@ -224,75 +224,52 @@ async def compute_route(
 ):
     """Compute shortest path between two points using candidate edge search."""
     if dataset not in registry.list_datasets():
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset}")
+        return RouteResponse(success=False, error=f"Dataset not found: {dataset}")
     
     if search_mode not in ['knn', 'radius']:
-        raise HTTPException(status_code=400, detail="search_mode must be 'knn' or 'radius'")
+        return RouteResponse(success=False, error="search_mode must be 'knn' or 'radius'")
     
     try:
-        # Find candidate edges for source and target
-        spatial_idx = registry.get_spatial_index(dataset)
-        
-        if search_mode == 'knn':
-            # k-nearest neighbors approach
-            source_candidates = spatial_idx.find_nearest_edges(source_lat, source_lon, max_results=num_candidates)
-            target_candidates = spatial_idx.find_nearest_edges(target_lat, target_lon, max_results=num_candidates)
-            search_desc = f"{num_candidates}-nearest neighbors"
-        else:
-            # Radius-based search
-            source_candidates = spatial_idx.find_edges_within_radius(source_lat, source_lon, search_radius, max_results=num_candidates)
-            target_candidates = spatial_idx.find_edges_within_radius(target_lat, target_lon, search_radius, max_results=num_candidates)
-            search_desc = f"{search_radius}m radius"
-        
-        if not source_candidates:
-            return RouteResponse(success=False, error=f"No edge found near source point using {search_desc}. Try adjusting search parameters or clicking closer to a road.")
-        
-        if not target_candidates:
-            return RouteResponse(success=False, error=f"No edge found near target point using {search_desc}. Try adjusting search parameters or clicking closer to a road.")
-        
-        logger.info(f"Testing {len(source_candidates)} source × {len(target_candidates)} target candidates ({search_mode} mode)")
-        
         # Get CH query engine
         try:
             ch_engine = ch_factory.get_engine(dataset)
         except KeyError:
             return RouteResponse(success=False, error=f"Query engine not available for dataset: {dataset}")
         
-        # Use efficient batch query with multi-source multi-target
-        source_edges = [edge_id for edge_id, _ in source_candidates]
-        source_dists = [dist for _, dist in source_candidates]
-        target_edges = [edge_id for edge_id, _ in target_candidates]
-        target_dists = [dist for _, dist in target_candidates]
-        
-        # Run multi-query using SDK
-        result = ch_engine.query_multi(
-            source_edges=source_edges,
-            target_edges=target_edges,
-            source_distances=source_dists,
-            target_distances=target_dists
+        # Delegate full routing to the high-performance routing server
+        # The server handles nearest neighbor search and pathfinding internally
+        result = ch_engine.compute_route_latlon(
+            start_lat=source_lat,
+            start_lng=source_lon,
+            end_lat=target_lat,
+            end_lng=target_lon
         )
         
         if not result.success:
-            logger.warning(f"Query failed: {result.error}")
-            return RouteResponse(success=False, error=result.error)
+            return RouteResponse(success=False, error=result.error or "Routing failed")
+            
+        # The GeoJSON is now propagated from the server via the SDK
+        feature = result.geojson
         
-        logger.info(f"Best path found with total distance: {result.distance:.2f}m")
-        
-        # Build GeoJSON from path
-        spatial_idx = registry.get_spatial_index(dataset)
-        geojson = build_geojson(result.path, spatial_idx)
+        # Fallback if server didn't return geojson (should not happen with new server)
+        if not feature:
+            feature = {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": []},
+                "properties": {"distance": result.distance, "warning": "No geometry returned"}
+            }
         
         return RouteResponse(
             success=True,
+            dataset=dataset,
             distance=result.distance,
-            runtime_ms=result.runtime_ms,
             path=result.path,
-            geojson=geojson
+            geojson=feature
         )
     
     except Exception as e:
         logger.error(f"Error computing route: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return RouteResponse(success=False, error=f"Internal server error: {str(e)}")
 
 
 def parse_cpp_output(output: str) -> tuple:

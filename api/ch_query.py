@@ -1,16 +1,9 @@
-"""
-Python SDK for Contraction Hierarchy Query Engine.
-
-This module provides a clean interface to the C++ Contraction Hierarchy
-query engine, supporting both single queries and efficient multi-source
-multi-target batch queries.
-"""
-
-import subprocess
+import requests
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -22,402 +15,198 @@ class QueryResult:
     distance: Optional[float] = None
     runtime_ms: Optional[float] = None
     path: Optional[List[int]] = None
+    geojson: Optional[dict] = None  # Add GeoJSON support
     error: Optional[str] = None
 
 
 class CHQueryEngine:
-    """
-    Contraction Hierarchy query engine wrapper.
-    
-    Provides efficient shortest path queries using precomputed
-    Contraction Hierarchies.
-    
-    Example:
-        >>> engine = CHQueryEngine(
-        ...     shortcuts_path="data/shortcuts.parquet",
-        ...     edges_path="data/edges.csv",
-        ...     binary_path="build/shortcut_router"
-        ... )
-        >>> result = engine.query(source=1234, target=5678)
-        >>> if result.success:
-        ...     print(f"Distance: {result.distance}m")
-        ...     print(f"Path: {result.path}")
-    """
-    
+    # ... (init and loaded check remain same)
+
     def __init__(
         self,
-        shortcuts_path: str,
-        edges_path: str,
-        binary_path: str,
+        dataset_name: str,
+        server_url: str = "http://localhost:8080",
         timeout: int = 30
     ):
         """
-        Initialize the query engine.
+        Initialize the query engine client.
         
         Args:
-            shortcuts_path: Path to shortcuts parquet file/directory
-            edges_path: Path to edges CSV file with H3 metadata
-            binary_path: Path to C++ query binary
-            timeout: Query timeout in seconds (default: 30)
-        
-        Raises:
-            FileNotFoundError: If binary doesn't exist
+            dataset_name: Name of the dataset to query (e.g. "Burnaby")
+            server_url: Base URL of the routing server
+            timeout: Request timeout in seconds
         """
-        self.shortcuts_path = str(Path(shortcuts_path).resolve())
-        self.edges_path = str(Path(edges_path).resolve())
-        self.binary_path = Path(binary_path).resolve()
+        self.dataset_name = dataset_name.lower()
+        self.server_url = server_url.rstrip('/')
         self.timeout = timeout
-        self._supports_multi_query = None  # Cache for binary capabilities
         
-        if not self.binary_path.exists():
-            raise FileNotFoundError(f"Query binary not found: {self.binary_path}")
+        self._ensure_dataset_loaded()
     
-    def _check_multi_query_support(self) -> bool:
-        """Check if binary supports multi-query arguments."""
-        if self._supports_multi_query is not None:
-            return self._supports_multi_query
-        
+    def _ensure_dataset_loaded(self):
         try:
-            # Run binary with --help to check available options
-            result = subprocess.run(
-                [str(self.binary_path), "--help"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            # Check if new multi-query arguments are supported
-            output = result.stdout + result.stderr
-            self._supports_multi_query = "--sources" in output and "--optimized" in output
-            return self._supports_multi_query
-        except Exception:
-            # If we can't determine, assume old binary
-            self._supports_multi_query = False
-            return False
-    
-    def query(
-        self,
-        source: int,
-        target: int
-    ) -> QueryResult:
-        """
-        Find shortest path between two edges.
-        
-        Args:
-            source: Source edge ID
-            target: Target edge ID
-        
-        Returns:
-            QueryResult with path and distance
-        """
-        cmd = [
-            str(self.binary_path),
-            "--shortcuts", self.shortcuts_path,
-            "--edges", self.edges_path,
-            "--source", str(source),
-            "--target", str(target)
-        ]
-        
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+            payload = {"dataset": self.dataset_name}
+            # Just try to load - idempotent
+            requests.post(
+                f"{self.server_url}/load_dataset",
+                json=payload,
                 timeout=self.timeout
             )
-            
-            if result.returncode != 0:
-                return QueryResult(
-                    success=False,
-                    error="No path found or query failed"
-                )
-            
-            return self._parse_output(result.stdout)
-        
-        except subprocess.TimeoutExpired:
-            return QueryResult(
-                success=False,
-                error=f"Query timeout after {self.timeout}s"
-            )
         except Exception as e:
-            return QueryResult(
-                success=False,
-                error=f"Query error: {e}"
-            )
+            logger.error(f"Failed to communicate with routing server: {e}")
+
+    def query(self, source: int, target: int) -> QueryResult:
+        return QueryResult(False, error="Raw edge query not supported by HTTP client yet. Use compute_route_latlon.")
     
-    def query_multi(
+    def query_multi(self, *args, **kwargs) -> QueryResult:
+        return QueryResult(False, error="Raw edge query not supported by HTTP client yet. Use compute_route_latlon.")
+
+    def compute_route_latlon(
         self,
-        source_edges: List[int],
-        target_edges: List[int],
-        source_distances: List[float],
-        target_distances: List[float],
-        optimized: bool = True
+        start_lat: float,
+        start_lng: float,
+        end_lat: float,
+        end_lng: float
     ) -> QueryResult:
         """
-        Find shortest path from any source edge to any target edge.
-        
-        This is more efficient than running len(source_edges) × len(target_edges)
-        separate queries.
-        
-        Args:
-            source_edges: List of source edge IDs
-            target_edges: List of target edge IDs
-            source_distances: Distance from origin to each source edge
-            target_distances: Distance from each target edge to destination
-            optimized: Use O(E log V) optimized algorithm (default: True)
-                      If False, uses O(N*M*E log V) batch processing
-        
-        Returns:
-            QueryResult with best path including approach distances
-        
-        Example:
-            >>> result = engine.query_multi(
-            ...     source_edges=[100, 101, 102],
-            ...     target_edges=[200, 201],
-            ...     source_distances=[10.5, 15.2, 20.1],
-            ...     target_distances=[12.3, 18.7],
-            ...     optimized=True
-            ... )
-            >>> # Tests 3×2=6 combinations efficiently in O(E log V)
+        Compute route using the routing server's full stack (NN + CH).
         """
-        if len(source_edges) != len(source_distances):
-            return QueryResult(
-                success=False,
-                error="source_edges and source_distances must have same length"
-            )
-        
-        if len(target_edges) != len(target_distances):
-            return QueryResult(
-                success=False,
-                error="target_edges and target_distances must have same length"
-            )
-        
-        # Check if binary supports multi-query
-        if not self._check_multi_query_support():
-            # Fall back to individual queries for old binaries
-            return self._query_multi_fallback(source_edges, target_edges, source_distances, target_distances)
-        
-        cmd = [
-            str(self.binary_path),
-            "--shortcuts", self.shortcuts_path,
-            "--edges", self.edges_path,
-            "--sources", ",".join(map(str, source_edges)),
-            "--source-dists", ",".join(map(str, source_distances)),
-            "--targets", ",".join(map(str, target_edges)),
-            "--target-dists", ",".join(map(str, target_distances))
-        ]
-        
-        if optimized:
-            cmd.append("--optimized")
-        
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+            payload = {
+                "dataset": self.dataset_name,
+                "start_lat": start_lat,
+                "start_lng": start_lng,
+                "end_lat": end_lat,
+                "end_lng": end_lng
+            }
+            response = requests.post(
+                f"{self.server_url}/route",
+                json=payload,
                 timeout=self.timeout
             )
+            data = response.json()
+            # logger.info(f"DEBUG: Raw response from server: {data}")
             
-            if result.returncode != 0:
-                return QueryResult(
-                    success=False,
-                    error="No path found between source and target sets"
-                )
+            if not data.get("success", False):
+                return QueryResult(success=False, error=data.get("error", "Unknown server error"))
             
-            return self._parse_output(result.stdout)
-        
-        except subprocess.TimeoutExpired:
-            return QueryResult(
-                success=False,
-                error=f"Query timeout after {self.timeout}s"
-            )
-        except Exception as e:
-            return QueryResult(
-                success=False,
-                error=f"Query error: {e}"
-            )
-    
-    def _query_multi_fallback(
-        self,
-        source_edges: List[int],
-        target_edges: List[int],
-        source_distances: List[float],
-        target_distances: List[float]
-    ) -> QueryResult:
-        """
-        Fallback implementation for old binaries without multi-query support.
-        Tests all source×target combinations using individual queries.
-        """
-        best_distance = float('inf')
-        best_path = None
-        best_runtime = 0
-        
-        for i, source_edge in enumerate(source_edges):
-            for j, target_edge in enumerate(target_edges):
-                result = self.query(source_edge, target_edge)
-                
-                if result.success and result.distance is not None:
-                    # Add approach distances
-                    total_distance = source_distances[i] + result.distance + target_distances[j]
-                    
-                    if total_distance < best_distance:
-                        best_distance = total_distance
-                        best_path = result.path
-                        best_runtime = result.runtime_ms
-        
-        if best_path is None:
-            return QueryResult(
-                success=False,
-                error="No path found between source and target sets"
-            )
-        
-        return QueryResult(
-            success=True,
-            distance=best_distance,
-            runtime_ms=best_runtime,
-            path=best_path
-        )
-    
-    def _parse_output(self, output: str) -> QueryResult:
-        """
-        Parse C++ binary output.
-        
-        Handles both single query and multi-query formats:
-        - Single: "Distance (including destination edge): X"
-        - Multi: "Distance (total including approach distances): X"
-        
-        Args:
-            output: C++ binary stdout
-        
-        Returns:
-            QueryResult parsed from output
-        """
-        try:
-            # Debug: Print raw output
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Raw C++ output:\n{output}")
+            route_container = data.get("route", {})
+            # logger.info(f"DEBUG: Route Container: {route_container}")
             
-            lines = output.strip().split('\n')
-            
-            distance = None
-            runtime_ms = None
-            path = None
-            
-            for line in lines:
-                line = line.strip()
-                
-                if "No path found" in line:
-                    return QueryResult(
-                        success=False,
-                        error="No path found"
-                    )
-                
-                # Handle both output formats
-                if "Distance" in line and ("including destination edge" in line or 
-                                          "total including" in line):
-                    distance = float(line.split(':')[1].strip())
-                
-                elif "Runtime:" in line:
-                    runtime_str = line.split(':')[1].strip().replace('ms', '').strip()
-                    runtime_ms = float(runtime_str)
-                
-                elif "Expanded path:" in line or "Expanded base edge path:" in line:
-                    # Extract path: "1593 -> 34486 -> 24508 -> 4835"
-                    path_str = line.split(':')[1].strip()
-                    # Remove ellipsis if present
-                    path_str = path_str.replace('...', '')
-                    path_parts = [p.strip() for p in path_str.split('->')]
-                    path = [int(p) for p in path_parts if p and p.isdigit()]
-            
-            if path is None or distance is None:
-                return QueryResult(
-                    success=False,
-                    error="Failed to parse query output"
-                )
+            # The server wraps the engine result which wraps the route details
+            # Structure: {success:true, route: {dataset:..., route: {distance:..., geojson:...}}}
+            route_details = route_container.get("route", {})
             
             return QueryResult(
                 success=True,
-                distance=distance,
-                runtime_ms=runtime_ms,
-                path=path
+                distance=route_details.get("distance"),
+                path=route_details.get("path"),
+                geojson=route_details.get("geojson")
             )
-        
         except Exception as e:
-            logger.error(f"Error parsing output: {e}")
-            return QueryResult(
-                success=False,
-                error=f"Parse error: {e}"
+            logger.error(f"Routing request failed: {e}")
+            return QueryResult(success=False, error=str(e))
+
+    def find_nearest_edges(self, lat: float, lon: float, radius: float = 1000.0, max_candidates: int = 5) -> dict:
+        """
+        Find multiple nearest edges to the given coordinates.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            radius: Search radius in meters
+            max_candidates: Maximum number of edges to return
+            
+        Returns:
+            Dict with keys: success, edges (list of {id, distance}), error
+        """
+        try:
+            payload = {
+                "dataset": self.dataset_name,
+                "lat": lat,
+                "lon": lon,
+                "radius": radius,
+                "max_candidates": max_candidates
+            }
+            response = requests.post(
+                f"{self.server_url}/nearest_edges",
+                json=payload,
+                timeout=self.timeout
             )
+            return response.json()
+        except Exception as e:
+            logger.error(f"Nearest edges request failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    def find_nearest_edge(self, lat: float, lon: float) -> dict:
+        """
+        Find the nearest edge to the given coordinates.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            
+        Returns:
+            Dict with keys: success, edge_id, distance_meters, runtime_ms, error
+        """
+        try:
+            payload = {
+                "dataset": self.dataset_name,
+                "lat": lat,
+                "lon": lon
+            }
+            response = requests.post(
+                f"{self.server_url}/nearest_edge",
+                json=payload,
+                timeout=self.timeout
+            )
+            return response.json()
+        except Exception as e:
+            logger.error(f"Nearest edge request failed: {e}")
+            return {"success": False, "error": str(e)}
 
 
 class CHQueryEngineFactory:
     """
-    Factory for creating CHQueryEngine instances from configuration.
-    
-    Example:
-        >>> factory = CHQueryEngineFactory()
-        >>> factory.register_dataset(
-        ...     name="Burnaby",
-        ...     shortcuts_path="data/shortcuts.parquet",
-        ...     edges_path="data/edges.csv",
-        ...     binary_path="build/shortcut_router"
-        ... )
-        >>> engine = factory.get_engine("Burnaby")
-        >>> result = engine.query(source=100, target=200)
+    Factory that now produces HTTP clients.
     """
     
-    def __init__(self):
-        self._engines = {}
+    def __init__(self, server_url: str = "http://localhost:8080"):
+        self.server_url = server_url
         self._configs = {}
+        self._engines = {}  # Cache for instantiated engines
     
-    def register_dataset(
-        self,
-        name: str,
-        shortcuts_path: str,
-        edges_path: str,
-        binary_path: str,
-        timeout: int = 30
-    ):
+    def register_dataset(self, name: str, **kwargs):
         """
-        Register a dataset configuration.
+        Register dataset.
         
         Args:
-            name: Dataset identifier
-            shortcuts_path: Path to shortcuts parquet
-            edges_path: Path to edges CSV
-            binary_path: Path to query binary
-            timeout: Query timeout in seconds
+           name: Dataset name (e.g. "Burnaby")
+           **kwargs: Ignored for HTTP client (paths are handled by server)
         """
-        self._configs[name] = {
-            'shortcuts_path': shortcuts_path,
-            'edges_path': edges_path,
-            'binary_path': binary_path,
-            'timeout': timeout
-        }
+        self._configs[name] = kwargs
+        # Invalidate cache if re-registering? 
+        # For now, simplistic overwrite.
+        if name in self._engines:
+            del self._engines[name]
     
     def get_engine(self, name: str) -> CHQueryEngine:
-        """
-        Get or create a query engine for a dataset.
-        
-        Engines are cached for reuse.
-        
-        Args:
-            name: Dataset identifier
-        
-        Returns:
-            CHQueryEngine instance
-        
-        Raises:
-            KeyError: If dataset not registered
-        """
-        if name not in self._configs:
-            raise KeyError(f"Dataset not registered: {name}")
-        
+        # Check cache first
         if name not in self._engines:
-            config = self._configs[name]
-            self._engines[name] = CHQueryEngine(**config)
-        
+            self._engines[name] = CHQueryEngine(name, self.server_url)
         return self._engines[name]
     
+    def check_health(self) -> dict:
+        """
+        Check if the routing server is healthy and get loaded datasets.
+        
+        Returns:
+            Dict with keys: status, datasets_loaded
+        """
+        try:
+            response = requests.get(f"{self.server_url}/health", timeout=5)
+            return response.json()
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
+
     def list_datasets(self) -> List[str]:
-        """Get list of registered dataset names."""
         return list(self._configs.keys())
