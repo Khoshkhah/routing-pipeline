@@ -20,10 +20,10 @@ graph LR
 
 | Stage | Project | Description | Tech Stack |
 |-------|---------|-------------|------------|
-| 1 | [osm-to-road-network](../osm-to-road-network) | **Extraction**: Converts OSM data to road network with H3 indexing. | Python, OSMnx |
-| 2 | [spark-shortest-path](../spark-shortest-path) | **Preprocessing**: Builds Contraction Hierarchy shortcuts at scale. | PySpark, GraphFrames |
-| 3 | [dijkstra-on-Hierarchy](../dijkstra-on-Hierarchy) | **Core Algorithm**: The C++ library implementing CH routing logic. | C++20 |
-| 4 | [routing-server](../routing-server) | **Serving**: High-performance HTTP server hosting the routing engine. | C++, Crow, Boost |
+| 1 | [osm-to-road-network](https://github.com/khoshkhah/osm-to-road-network) | **Extraction**: Converts OSM data to road network with H3 indexing. | Python, OSMnx |
+| 2 | [spark-shortest-path](https://github.com/khoshkhah/spark-shortest-path) | **Preprocessing**: Builds Contraction Hierarchy shortcuts at scale. | PySpark, GraphFrames |
+| 3 | [dijkstra-on-Hierarchy](https://github.com/khoshkhah/dijkstra-on-Hierarchy) | **Core Algorithm**: The C++ library implementing CH routing logic. | C++20 |
+| 4 | [routing-server](https://github.com/khoshkhah/routing-server) | **Serving**: High-performance HTTP server hosting the routing engine. | C++, Crow, Boost |
 | App | [routing-pipeline](./) | **Application**: Python API Gateway and Streamlit UI. | FastAPI, Streamlit |
 
 ## 🚀 Quick Start
