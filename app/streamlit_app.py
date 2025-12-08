@@ -41,6 +41,50 @@ API_URL = "http://localhost:8000/route"
 
 # For testing: API_URL = "https://router.project-osrm.org/route/v1/driving" 
 
+# --- 2b. CONFIG LOADING ---
+import yaml
+import json
+import os
+
+# Removed @st.cache_data to allow dynamic updates from datasets.yaml
+def load_config():
+    # Resolve path relative to this script file
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "..", "config", "datasets.yaml")
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config['datasets']
+
+datasets = load_config()
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Convert datasets list to a dict for easier access, and load boundaries
+dataset_map = {}
+for ds in datasets:
+    # Heuristic for center if not provided
+    default_center = [37.08, -84.61] # Somerset
+    if "Burnaby" in ds['name'] or "Vancouver" in ds['name']:
+        default_center = [49.25, -123.00] 
+    
+    ds_entry = {
+        'name': ds['description'], # Full description for internal use if needed
+        'short_name': ds.get('short_name', ds['name']), # Use short name for display
+        'center': ds.get('center', default_center),
+        'zoom': ds.get('zoom', 13),
+        'boundary': None
+    }
+    
+    # Load boundary if exists
+    if 'boundary_path' in ds:
+        # Resolve 'data/burnaby/...' relative to project root (one level up from app/)
+        boundary_path = os.path.join(os.path.dirname(script_dir), ds['boundary_path'])
+        if os.path.exists(boundary_path):
+            with open(boundary_path, 'r') as f:
+                ds_entry['boundary'] = json.load(f)
+    
+    # Use the EXACT name from config as key to match what we send to backend
+    dataset_map[ds['name']] = ds_entry
+
 # --- JAVASCRIPT & HTML APPLICATION (Unchanged Logic) ---
 # The internal component CSS already forces 100vh/100vw, but is now enforced by the outer container.
 
@@ -171,9 +215,18 @@ html_code = f"""
             <div style="padding: 10px; border-bottom: 1px solid #ddd;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Dataset</label>
                 <select id="dataset-selector" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
-                    <option value="Burnaby">Burnaby, Canada</option>
-                    <option value="Somerset">Somerset, UK</option>
+                    <option value="burnaby">Burnaby, Canada</option>
+                    <option value="somerset">Somerset, UK</option>
                 </select>
+                
+                <!-- NEW: Dynamic Loading Controls -->
+                <div style="margin-top: 10px; font-size: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <span id="dataset-status-text" style="color: #999;">Status: ...</span>
+                    <div>
+                        <button id="btn-load" onclick="loadDataset()" style="background: #2ecc71; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; display: none;">Load</button>
+                        <button id="btn-unload" onclick="unloadDataset()" style="background: #e74c3c; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; display: none;">Unload</button>
+                    </div>
+                </div>
             </div>
             <div class="input-row">
                 <div class="marker-icon marker-A"></div>
@@ -193,6 +246,11 @@ html_code = f"""
         </div>
     </div>
     
+    <!-- DEBUG: Output config to verify loading -->
+    <div style="display:none;" id="debug-config">
+    __JSON_CONFIG_PLACEHOLDER__
+    </div>
+    
     <div id="map-wrapper">
         <div id="map"></div>
     </div>
@@ -200,6 +258,19 @@ html_code = f"""
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
+        // --- 0. CONFIGURATION & DROPDOWN ---
+        const datasetConfig = __JSON_CONFIG_PLACEHOLDER__;
+
+        const selector = document.getElementById('dataset-selector');
+        selector.innerHTML = ''; // Clear hardcoded options
+        
+        Object.keys(datasetConfig).forEach(key => {{
+            const opt = document.createElement('option');
+            opt.value = key; // The unique name key
+            opt.textContent = datasetConfig[key].short_name || key; // Use short name
+            selector.appendChild(opt);
+        }});
+
         // --- DOM ELEMENTS ---
         const sidebar = document.getElementById('sidebar');
         const mapWrapper = document.getElementById('map-wrapper');
@@ -235,20 +306,6 @@ html_code = f"""
         
         var routeLayer = null;
         
-        // --- 2b. DATASET CONFIGURATION ---
-        const datasetConfig = {{
-            'Burnaby': {{
-                center: [49.23, -122.96],
-                zoom: 13,
-                name: 'Burnaby, Canada'
-            }},
-            'Somerset': {{
-                center: [37.08, -84.61],
-                zoom: 13,
-                name: 'Somerset, UK'
-            }}
-        }};
-
         // --- 3. API FUNCTION ---
         async function fetchRoute(latA, lonA, latB, lonB) {{
             loader.style.display = 'block';
@@ -330,16 +387,51 @@ html_code = f"""
                     }}).addTo(map);
                 }}
                 
-                // Display distance and query time
                 if (data.success === false) {{
                     document.getElementById('disp-time').innerText = "No route";
                     document.getElementById('disp-dist').innerText = data.error || "Path not found";
                 }} else {{
-                    document.getElementById('disp-dist').innerText = (dist > 1000) ? (dist/1000).toFixed(2) + ' km' : dist.toFixed(0) + ' m';
-                    document.getElementById('disp-time').innerText = runtime.toFixed(2) + ' ms';
+                    // Parse values
+                    var costSeconds = (data.distance || 0) * 3.6;
+                    var physicalMeters = data.distance_meters || 0;
+                    var runtimeMs = data.runtime_ms || 0;
+
+                    // Helper for time formatting
+                    function formatTime(seconds) {{
+                        var m = Math.floor(seconds / 60);
+                        var s = Math.floor(seconds % 60);
+                        return m + " min " + s + " sec";
+                    }}
+
+                    // Display Cost as Time
+                    document.getElementById('disp-time').innerText = formatTime(costSeconds);
+                    
+                    // Display Physical Distance
+                    var distDisplay = (physicalMeters > 1000) ? (physicalMeters/1000).toFixed(2) + ' km' : physicalMeters.toFixed(0) + ' m';
+                    document.getElementById('disp-dist').innerText = distDisplay;
+                    
+                    // Detailed Timing Display
+                    let timeText = runtimeMs.toFixed(2) + ' ms';
+                    if (data.timing_breakdown) {{
+                        const tb = data.timing_breakdown;
+                        let breakdownHtml = `
+                            <div style="font-size: 10px; color: #666; margin-top: 5px;">
+                                <div>Runtime: ${{timeText}}</div>
+                                <div>Find Nearest: ${{tb.find_nearest_us}} µs</div>
+                                <div>CH Search: ${{tb.search_us}} µs</div>
+                                <div>Path Expand: ${{tb.expand_us}} µs</div>
+                                <div>GeoJSON: ${{tb.geojson_us}} µs</div>
+                            </div>
+                        `;
+                        // Append to time box or a separate area?
+                        // Let's replace the time stat with cost, but add runtime metrics below it suitable
+                        document.getElementById('disp-time').innerHTML = formatTime(costSeconds) + 
+                            `<div style="font-size: 10px; color: #999; margin-top: 2px;">Algo: ${{timeText}}</div>` +
+                            breakdownHtml;
+                    }} 
                     
                     // DEBUG: Show info in UI
-                    document.getElementById('debug-info').innerText = "Points: " + routeCoords.length + " | Dist: " + dist;
+                    document.getElementById('debug-info').innerText = "Points: " + routeCoords.length + " | Cost: " + costSeconds.toFixed(1) + "s | Len: " + (physicalMeters/1000).toFixed(2) + "km";
                 }}
             }} catch (e) {{
                 console.error("Routing error:", e);
@@ -389,9 +481,136 @@ html_code = f"""
             markerA.setLatLng([config.center[0] - 0.01, config.center[1] - 0.01]);
             markerB.setLatLng([config.center[0] + 0.01, config.center[1] + 0.01]);
             
+            // Update Loading Status UI
+            checkServerStatus();
+            
             // Recalculate route with new dataset
             onDrag();
+            
+            // Update Boundary Layer
+            if (window.currentBoundaryLayer) {{
+                map.removeLayer(window.currentBoundaryLayer);
+                window.currentBoundaryLayer = null;
+            }}
+            
+            if (config.boundary) {{
+                window.currentBoundaryLayer = L.geoJSON(config.boundary, {{
+                    style: function(feature) {{
+                        return {{
+                            color: "#3388ff",
+                            weight: 2,
+                            opacity: 0.6,
+                            dashArray: '5, 5',
+                            fillOpacity: 0.05
+                        }};
+                    }}
+                }}).addTo(map);
+            }}
         }});
+        
+        // --- 5b. DYNAMIC LOADING LOGIC ---
+        async function checkServerStatus() {{
+            const dataset = document.getElementById('dataset-selector').value;
+            const statusLabel = document.getElementById('dataset-status-text');
+            const btnLoad = document.getElementById('btn-load');
+            const btnUnload = document.getElementById('btn-unload');
+            
+            statusLabel.innerText = "Checking...";
+            statusLabel.style.color = "#999";
+            
+            try {{
+                // Determine API base URL (hack to get host mostly correct)
+                const apiBase = "{API_URL}".replace("/route", ""); // e.g. http://localhost:8000
+                const resp = await fetch(`${{apiBase}}/server-status`);
+                const data = await resp.json();
+                
+                if (data.status === 'healthy') {{
+                    const loaded = data.datasets_loaded || [];
+                    if (loaded.includes(dataset)) {{
+                        statusLabel.innerText = "Loaded";
+                        statusLabel.style.color = "#2ecc71";
+                        btnLoad.style.display = 'none';
+                        btnUnload.style.display = 'inline-block';
+                    }} else {{
+                        statusLabel.innerText = "Unloaded";
+                        statusLabel.style.color = "#e74c3c";
+                        btnLoad.style.display = 'inline-block';
+                        btnUnload.style.display = 'none';
+                    }}
+                }} else {{
+                    statusLabel.innerText = "Server Error";
+                    statusLabel.style.color = "red";
+                }}
+            }} catch (e) {{
+                console.error("Status check failed", e);
+                statusLabel.innerText = "API Offline";
+            }}
+        }}
+
+        async function loadDataset() {{
+            const dataset = document.getElementById('dataset-selector').value;
+            const statusLabel = document.getElementById('dataset-status-text');
+            statusLabel.innerText = "Loading...";
+            
+            try {{
+                const apiBase = "{API_URL}".replace("/route", "");
+                const resp = await fetch(`${{apiBase}}/load-dataset`, {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{dataset: dataset}})
+                }});
+                if (resp.ok) {{
+                    checkServerStatus();
+                    setTimeout(onDrag, 1000); // Trigger route calc
+                }} else {{
+                    alert("Failed to load dataset");
+                    checkServerStatus();
+                }}
+            }} catch (e) {{
+                alert("Error loading dataset: " + e.message);
+            }}
+        }}
+
+        async function unloadDataset() {{
+            const dataset = document.getElementById('dataset-selector').value;
+            const statusLabel = document.getElementById('dataset-status-text');
+            statusLabel.innerText = "Unloading...";
+            
+            try {{
+                const apiBase = "{API_URL}".replace("/route", "");
+                const resp = await fetch(`${{apiBase}}/unload-dataset`, {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{dataset: dataset}})
+                }});
+                if (resp.ok) {{
+                    checkServerStatus();
+                    // Clear the map path
+                    if (routeLayer) {{
+                        map.removeLayer(routeLayer);
+                        routeLayer = null;
+                    }}
+                    // Reset stats
+                    document.getElementById('disp-time').innerText = "0 min";
+                    document.getElementById('disp-dist').innerText = "0 km";
+                    document.getElementById('debug-info').innerText = "Dataset unloaded";
+                }} else {{
+                    alert("Failed to unload dataset");
+                    checkServerStatus();
+                }}
+            }} catch (e) {{
+                alert("Error unloading dataset: " + e.message);
+            }}
+        }}
+
+        // Add event listeners for load/unload buttons
+        document.getElementById('btn-load').addEventListener('click', loadDataset);
+        document.getElementById('btn-unload').addEventListener('click', unloadDataset);
+
+        // Trigger change to load initial boundary and status
+        document.getElementById('dataset-selector').dispatchEvent(new Event('change'));
+        // Initial check too
+        setTimeout(checkServerStatus, 500);
 
         // --- 6. SEARCH MODE CHANGE HANDLER ---
         document.getElementById('search-mode').addEventListener('change', function() {{
@@ -424,4 +643,6 @@ html_code = f"""
 
 # Inject the component (removed height=900)
 # We use max height/width properties on the containers instead.
-components.html(html_code, width=2000, height=9999, scrolling=False)
+import json
+json_config_str = json.dumps(dataset_map)
+components.html(html_code.replace("__JSON_CONFIG_PLACEHOLDER__", json_config_str), width=2000, height=9999, scrolling=False)

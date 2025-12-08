@@ -1,4 +1,5 @@
 import requests
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -13,9 +14,11 @@ class QueryResult:
     """Result from a shortest path query."""
     success: bool
     distance: Optional[float] = None
+    distance_meters: Optional[float] = None
     runtime_ms: Optional[float] = None
     path: Optional[List[int]] = None
     geojson: Optional[dict] = None  # Add GeoJSON support
+    timing_breakdown: Optional[dict] = None
     error: Optional[str] = None
 
 
@@ -65,7 +68,10 @@ class CHQueryEngine:
         start_lat: float,
         start_lng: float,
         end_lat: float,
-        end_lng: float
+        end_lng: float,
+        search_mode: str = "knn",
+        num_candidates: int = 3,
+        search_radius: float = 100.0
     ) -> QueryResult:
         """
         Compute route using the routing server's full stack (NN + CH).
@@ -76,13 +82,21 @@ class CHQueryEngine:
                 "start_lat": start_lat,
                 "start_lng": start_lng,
                 "end_lat": end_lat,
-                "end_lng": end_lng
+                "end_lng": end_lng,
+                "search_mode": search_mode,
+                "num_candidates": num_candidates,
+                "search_radius": search_radius
             }
+            
+            t0 = time.time()
             response = requests.post(
                 f"{self.server_url}/route",
                 json=payload,
                 timeout=self.timeout
             )
+            t1 = time.time()
+            client_side_ms = (t1 - t0) * 1000.0
+            
             data = response.json()
             # logger.info(f"DEBUG: Raw response from server: {data}")
             
@@ -99,8 +113,11 @@ class CHQueryEngine:
             return QueryResult(
                 success=True,
                 distance=route_details.get("distance"),
+                distance_meters=route_details.get("distance_meters"),
                 path=route_details.get("path"),
-                geojson=route_details.get("geojson")
+                geojson=route_details.get("geojson"),
+                runtime_ms=route_details.get("runtime_ms") or client_side_ms,
+                timing_breakdown=route_container.get("timing_breakdown")
             )
         except Exception as e:
             logger.error(f"Routing request failed: {e}")

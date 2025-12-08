@@ -2,14 +2,42 @@
 # Define available datasets with paths to shortcuts, edges, and query binary
 
 datasets:
-  - name: "Somerset"
+  - name: "somerset"
     shortcuts_path: "../spark-shortest-path/output/Somerset_shortcuts_final"
     edges_path: "../spark-shortest-path/data/Somerset_driving_simplified_edges_with_h3.csv"
     binary_path: "../dijkstra-on-Hierarchy/build/shortcut_router"
+    boundary_path: "../osm-to-road-network/data/output/Somerset_driving_boundary.geojson"
+    center: [37.07, -84.61]
+    zoom: 13
+    short_name: "Somerset"
     description: "Somerset, Kentucky, USA"
   
-  - name: "Burnaby"
+  - name: "burnaby"
     shortcuts_path: "../spark-shortest-path/output/Burnaby_shortcuts_final"
     edges_path: "../osm-to-road-network/data/output/Burnaby_driving_simplified_edges_with_h3.csv"
     binary_path: "../dijkstra-on-Hierarchy/cpp/build/shortcut_router"
+    boundary_path: "../osm-to-road-network/data/output/Burnaby_driving_boundary.geojson"
+    center: [49.25, -122.95]
+    zoom: 13
+    short_name: "Burnaby"
     description: "Burnaby, British Columbia, Canada"
+
+  - name: "all_vancouver"
+    shortcuts_path: "../spark-shortest-path/output/all_Vancouver_shortcuts_final"
+    edges_path: "../osm-to-road-network/data/output/all_Vancouver_driving_simplified_edges_with_h3.csv"
+    binary_path: "../dijkstra-on-Hierarchy/cpp/build/shortcut_router"
+    boundary_path: "../osm-to-road-network/data/output/all_Vancouver_driving_boundary.geojson"
+    center: [49.25, -123.00]
+    zoom: 12
+    short_name: "Metro Vancouver"
+    description: "all Vancouver, British Columbia, Canada"
+
+  - name: "vancouver"
+    shortcuts_path: "../spark-shortest-path/output/Vancouver_shortcuts_final"
+    edges_path: "../osm-to-road-network/data/output/Vancouver_driving_simplified_edges_with_h3.csv"
+    binary_path: "../dijkstra-on-Hierarchy/cpp/build/shortcut_router"
+    boundary_path: "../osm-to-road-network/data/output/Vancouver_driving_boundary.geojson"
+    center: [49.25, -123.12]
+    zoom: 12
+    short_name: "Vancouver City"
+    description: "Vancouver proper, British Columbia, Canada"

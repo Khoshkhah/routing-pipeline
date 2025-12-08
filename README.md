@@ -141,7 +141,10 @@ Scripts are available in `scripts/` directory:
 - ✅ **Interactive Map**: Folium-based OpenStreetMap with click-to-select
 - ✅ **Multi-Dataset Support**: Switch between different regions/datasets
 - ✅ **Real-Time Routing**: Sub-second path computation using C++ engine
-- ✅ **Path Visualization**: Expanded base edge path displayed with road metadata
+- ✅ **Dynamic Dataset Loading**: Load/Unload datasets on-demand to manage memory
+- ✅ **Detailed Metrics**: Granular breakdown of runtime (Search, Expand, GeoJSON)
+- ✅ **Cost vs Distance**: Clear distinction between Travel Time (optimization cost) and Physical Distance (km)
+- ✅ **path Visualization**: Expanded base edge path displayed with road metadata
 - ✅ **Statistics Dashboard**: Distance, runtime, and path composition
 - ✅ **Spatial Indexing**: R-tree for fast nearest-edge queries
 - ✅ **REST API**: Programmatic access to routing functionality
@@ -173,6 +176,9 @@ The FastAPI backend provides the following endpoints:
 |----------|--------|-------------|
 | `/` | GET | API information and health check |
 | `/datasets` | GET | List available datasets with bounds |
+| `/load-dataset` | POST | Load a dataset into memory |
+| `/unload-dataset` | POST | Unload a dataset from memory |
+| `/server-status` | GET | Check C++ server connection and loaded datasets |
 | `/nearest-edge` | GET | Find nearest edge to lat/lon coordinates |
 | `/route` | GET | Compute shortest path between two points |
 

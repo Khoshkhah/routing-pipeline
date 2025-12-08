@@ -74,14 +74,19 @@ class RouteResponse(BaseModel):
     """Response for route query."""
     success: bool
     distance: Optional[float] = None
+    distance_meters: Optional[float] = None
     runtime_ms: Optional[float] = None
     path: Optional[List[int]] = None
     geojson: Optional[Dict] = None
+    timing_breakdown: Optional[Dict[str, float]] = None
     error: Optional[str] = None
 
 
+import requests
+import time
+
 def load_config(config_path: str = "config/datasets.yaml"):
-    """Load dataset configuration from YAML file."""
+    """Load dataset configuration from YAML file and initialize C++ server."""
     config_file = Path(config_path)
     
     if not config_file.exists():
@@ -95,6 +100,23 @@ def load_config(config_path: str = "config/datasets.yaml"):
     
     datasets = config.get('datasets', [])
     base_dir = config_file.parent.parent
+    
+    # Wait for C++ server health
+    server_url = "http://localhost:8080"
+    max_retries = 10
+    server_ready = False
+    
+    for i in range(max_retries):
+        try:
+            requests.get(f"{server_url}/health", timeout=1)
+            server_ready = True
+            break
+        except requests.RequestException:
+            logger.info(f"Waiting for C++ server... ({i+1}/{max_retries})")
+            time.sleep(1)
+            
+    if not server_ready:
+        logger.error("C++ server is not reachable. Skipping dataset loading.")
     
     for ds in datasets:
         name = ds['name']
@@ -113,6 +135,23 @@ def load_config(config_path: str = "config/datasets.yaml"):
         registry.register_dataset(name, shortcuts_path, edges_path, binary_path)
         logger.info(f"Registered dataset '{name}'")
         
+        # Load into C++ server if ready
+        # CHANGED: Default to lazy loading (do not load on startup)
+        # if server_ready:
+        #     try:
+        #         payload = {
+        #             "dataset": name,
+        #             "shortcuts_path": shortcuts_path,
+        #             "edges_path": edges_path
+        #         }
+        #         resp = requests.post(f"{server_url}/load_dataset", json=payload, timeout=30)
+        #         if resp.status_code == 200:
+        #             logger.info(f"Successfully loaded '{name}' into C++ server")
+        #         else:
+        #             logger.error(f"Failed to load '{name}': {resp.text}")
+        #     except Exception as e:
+        #         logger.error(f"Error loading '{name}' into C++ server: {e}")
+        
         # Also register with CH query engine factory
         try:
             ch_factory.register_dataset(
@@ -122,7 +161,7 @@ def load_config(config_path: str = "config/datasets.yaml"):
                 binary_path=binary_path,
                 timeout=30
             )
-        except FileNotFoundError as e:
+        except Exception as e:
             logger.warning(f"CH engine not available for {name}: {e}")
 
 
@@ -242,7 +281,10 @@ async def compute_route(
             start_lat=source_lat,
             start_lng=source_lon,
             end_lat=target_lat,
-            end_lng=target_lon
+            end_lng=target_lon,
+            search_mode=search_mode,
+            num_candidates=num_candidates,
+            search_radius=search_radius
         )
         
         if not result.success:
@@ -263,13 +305,77 @@ async def compute_route(
             success=True,
             dataset=dataset,
             distance=result.distance,
+            distance_meters=result.distance_meters,
+            runtime_ms=result.runtime_ms,
             path=result.path,
-            geojson=feature
+            geojson=feature,
+            timing_breakdown=result.timing_breakdown
         )
     
     except Exception as e:
         logger.error(f"Error computing route: {e}", exc_info=True)
         return RouteResponse(success=False, error=f"Internal server error: {str(e)}")
+
+
+class LoadDatasetRequest(BaseModel):
+    dataset: str
+
+@app.post("/load-dataset")
+async def load_dataset_endpoint(request: LoadDatasetRequest):
+    """Load a dataset into the C++ server."""
+    dataset = request.dataset
+    if dataset not in registry.list_datasets():
+        raise HTTPException(status_code=404, detail=f"Dataset not found in registry: {dataset}")
+    
+    info = registry.get_dataset_info(dataset)
+    
+    # Proxy to C++ server
+    try:
+        payload = {
+            "dataset": dataset,
+            "shortcuts_path": info['shortcuts_path'],
+            "edges_path": info['edges_path']
+        }
+        resp = requests.post("http://localhost:8080/load_dataset", json=payload, timeout=60)
+        
+        if resp.status_code == 200:
+            return {"success": True, "message": f"Dataset {dataset} loaded"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to load dataset: {resp.text}")
+            
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"C++ server error: {str(e)}")
+
+
+@app.post("/unload-dataset")
+async def unload_dataset_endpoint(request: LoadDatasetRequest):
+    """Unload a dataset from the C++ server."""
+    dataset = request.dataset
+    
+    # Proxy to C++ server
+    try:
+        payload = {"dataset": dataset}
+        resp = requests.post("http://localhost:8080/unload_dataset", json=payload, timeout=10)
+        
+        if resp.status_code == 200:
+            return {"success": True, "message": f"Dataset {dataset} unloaded"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to unload dataset: {resp.text}")
+            
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"C++ server error: {str(e)}")
+
+@app.get("/server-status")
+async def server_status():
+    """Get C++ server status and loaded datasets."""
+    try:
+        resp = requests.get("http://localhost:8080/health", timeout=2)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            return {"status": "error", "error": f"C++ server returned {resp.status_code}"}
+    except Exception as e:
+        return {"status": "down", "error": str(e)}
 
 
 def parse_cpp_output(output: str) -> tuple:
