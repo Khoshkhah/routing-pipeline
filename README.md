@@ -139,14 +139,16 @@ Scripts are available in `scripts/` directory:
 ### Features
 
 - ✅ **Interactive Map**: Folium-based OpenStreetMap with click-to-select
-- ✅ **Multi-Dataset Support**: Switch between different regions/datasets
+- ✅ **Search Modes**:
+    - **One-to-One**: Optimized bidirectional Dijkstra for point-to-point queries
+    - **KNN / Radius**: Multi-source multi-target Dijkstra for area-based queries
+- ✅ **H3 Visualization**: Debug layer showing Source (Green), Target (Red), and High (Blue) cells for algorithm verification
 - ✅ **Real-Time Routing**: Sub-second path computation using C++ engine
 - ✅ **Dynamic Dataset Loading**: Load/Unload datasets on-demand to manage memory
 - ✅ **Detailed Metrics**: Granular breakdown of runtime (Search, Expand, GeoJSON)
 - ✅ **Cost vs Distance**: Clear distinction between Travel Time (optimization cost) and Physical Distance (km)
-- ✅ **path Visualization**: Expanded base edge path displayed with road metadata
+- ✅ **Path Visualization**: Expanded base edge path displayed with road metadata
 - ✅ **Statistics Dashboard**: Distance, runtime, and path composition
-- ✅ **Spatial Indexing**: R-tree for fast nearest-edge queries
 - ✅ **REST API**: Programmatic access to routing functionality
 
 

@@ -79,6 +79,7 @@ class RouteResponse(BaseModel):
     path: Optional[List[int]] = None
     geojson: Optional[Dict] = None
     timing_breakdown: Optional[Dict[str, float]] = None
+    debug: Optional[Dict] = None
     error: Optional[str] = None
 
 
@@ -252,12 +253,18 @@ async def find_nearest_edge(
 
 @app.get("/route", response_model=RouteResponse)
 async def compute_route(
-    source_lat: float = Query(..., description="Source latitude"),
-    source_lon: float = Query(..., description="Source longitude"),
-    target_lat: float = Query(..., description="Target latitude"),
-    target_lon: float = Query(..., description="Target longitude"),
+    # Preferred/current parameter names
+    source_lat: Optional[float] = Query(None, description="Source latitude (preferred)"),
+    source_lon: Optional[float] = Query(None, description="Source longitude (preferred)"),
+    target_lat: Optional[float] = Query(None, description="Target latitude (preferred)"),
+    target_lon: Optional[float] = Query(None, description="Target longitude (preferred)"),
+    # Legacy parameter names (kept for backward compatibility)
+    start_lat: Optional[float] = Query(None, description="Legacy: start latitude"),
+    start_lng: Optional[float] = Query(None, description="Legacy: start longitude"),
+    end_lat: Optional[float] = Query(None, description="Legacy: end latitude"),
+    end_lng: Optional[float] = Query(None, description="Legacy: end longitude"),
     dataset: str = Query(..., description="Dataset name"),
-    search_mode: str = Query("knn", description="Search mode: 'knn' for k-nearest neighbors or 'radius' for radius search"),
+    search_mode: str = Query("knn", description="Search mode: 'knn', 'radius', or 'one_to_one'"),
     num_candidates: int = Query(3, description="Number of candidate edges (for knn mode)", ge=1, le=10),
     search_radius: float = Query(100.0, description="Search radius in meters (for radius mode)", ge=10.0, le=500.0)
 ):
@@ -265,10 +272,31 @@ async def compute_route(
     if dataset not in registry.list_datasets():
         return RouteResponse(success=False, error=f"Dataset not found: {dataset}")
     
-    if search_mode not in ['knn', 'radius']:
-        return RouteResponse(success=False, error="search_mode must be 'knn' or 'radius'")
+    if search_mode not in ['knn', 'radius', 'one_to_one']:
+        return RouteResponse(success=False, error="search_mode must be 'knn', 'radius', or 'one_to_one'")
     
     try:
+        # Resolve coordinate parameters: prefer current names, fall back to legacy names
+        def pick(primary: Optional[float], legacy: Optional[float]) -> Optional[float]:
+            return primary if primary is not None else legacy
+
+        src_lat = pick(source_lat, start_lat)
+        src_lon = pick(source_lon, start_lng)
+        tgt_lat = pick(target_lat, end_lat)
+        tgt_lon = pick(target_lon, end_lng)
+
+        # Validate presence of coordinates
+        missing = []
+        if src_lat is None:
+            missing.append('source_lat/start_lat')
+        if src_lon is None:
+            missing.append('source_lon/start_lng')
+        if tgt_lat is None:
+            missing.append('target_lat/end_lat')
+        if tgt_lon is None:
+            missing.append('target_lon/end_lng')
+        if missing:
+            return RouteResponse(success=False, error=f"Missing required coordinate parameters: {', '.join(missing)}")
         # Get CH query engine
         try:
             ch_engine = ch_factory.get_engine(dataset)
@@ -278,10 +306,10 @@ async def compute_route(
         # Delegate full routing to the high-performance routing server
         # The server handles nearest neighbor search and pathfinding internally
         result = ch_engine.compute_route_latlon(
-            start_lat=source_lat,
-            start_lng=source_lon,
-            end_lat=target_lat,
-            end_lng=target_lon,
+            start_lat=src_lat,
+            start_lng=src_lon,
+            end_lat=tgt_lat,
+            end_lng=tgt_lon,
             search_mode=search_mode,
             num_candidates=num_candidates,
             search_radius=search_radius
@@ -309,7 +337,8 @@ async def compute_route(
             runtime_ms=result.runtime_ms,
             path=result.path,
             geojson=feature,
-            timing_breakdown=result.timing_breakdown
+            timing_breakdown=result.timing_breakdown,
+            debug=result.debug
         )
     
     except Exception as e:

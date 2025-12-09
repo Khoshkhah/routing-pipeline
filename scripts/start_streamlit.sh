@@ -14,5 +14,5 @@ source ../venv/bin/activate
 # Change to app directory
 cd ../app
 
-# Run streamlit (without port/address flags that cause issues)
-streamlit run streamlit_app.py
+# Run streamlit (forcing localhost)
+streamlit run streamlit_app.py --server.address localhost

@@ -202,7 +202,6 @@ html_code = f"""
                 <select id="search-mode" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
                     <option value="radius">Radius</option>
                     <option value="knn">KNN (K-Nearest)</option>
-                    <option value="one_to_one">One-to-One</option>
                 </select>
             </div>
             <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="radius-container">
@@ -321,7 +320,6 @@ html_code = f"""
         var markerB = L.marker([49.24, -122.95], {{ icon: iconB, draggable: true }}).addTo(map);
         
         var routeLayer = null;
-        var debugLayer = L.layerGroup().addTo(map);
         
         // --- 3. API FUNCTION ---
         async function fetchRoute(latA, lonA, latB, lonB) {{
@@ -362,7 +360,6 @@ html_code = f"""
                 console.log("API Response:", data);
                 
                 if (routeLayer) map.removeLayer(routeLayer);
-                debugLayer.clearLayers();
 
                 var routeCoords = [];
                 var dist = 0;
@@ -400,37 +397,6 @@ html_code = f"""
                     
                     dist = data.distance || 0;
                     runtime = data.runtime_ms || 0;
-
-                    // Render Debug Cells (Source/Target/High)
-                    if (data.debug && data.debug.cells) {{
-                        const cells = data.debug.cells;
-                        
-                        const addCell = (cellData, color, label) => {{
-                            if (!cellData || !cellData.boundary) return;
-                            // Boundary is [lon, lat], convert to [lat, lon]
-                            const latlngs = cellData.boundary.map(c => [c[1], c[0]]);
-                            L.polygon(latlngs, {{
-                                color: color,
-                                fillColor: color,
-                                fillOpacity: 0.4,
-                                weight: 3
-                            }}).bindTooltip(label + " (Res " + cellData.res + ")").addTo(debugLayer);
-                        }};
-
-                        console.log("Debug Cells:", cells);
-                        if (cells.source) addCell(cells.source, '#00ff00', "Source");
-                        if (cells.target) addCell(cells.target, '#ff0000', "Target");
-                        if (cells.high) addCell(cells.high, '#0000ff', "High Cell");
-                        
-                        document.getElementById("debug-info").innerHTML = 
-                            "Route found.<br>" +
-                            "Src: " + (cells.source ? "Found" : "Miss") + 
-                            " | Tgt: " + (cells.target ? "Found" : "Miss") + 
-                            " | High: " + (cells.high ? "Found" : "Miss");
-                    }} else {{
-                        console.warn("No debug.cells in response");
-                        document.getElementById("debug-info").innerHTML = "Found path, but NO debug cells.";
-                    }}
                 }}
                 
                 if (routeCoords.length > 0) {{
@@ -676,7 +642,7 @@ html_code = f"""
             const radiusContainer = document.getElementById('radius-container');
             const knnContainer = document.getElementById('knn-container');
             
-            if (mode === 'radius' || mode === 'one_to_one') {{
+            if (mode === 'radius') {{
                 radiusContainer.style.display = 'block';
                 knnContainer.style.display = 'none';
             }} else {{

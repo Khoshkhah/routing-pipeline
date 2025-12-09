@@ -1,0 +1,22 @@
+nohup: ignoring input
+INFO:     Started server process [3054]
+INFO:     Waiting for application startup.
+2025-12-08 20:25:10,264 - api.server - INFO - Starting Contraction Hierarchies API server...
+2025-12-08 20:25:10,264 - api.server - INFO - Loading configuration from config/datasets.yaml
+2025-12-08 20:25:10,268 - api.data_loader - INFO - Registered dataset: somerset
+2025-12-08 20:25:10,268 - api.server - INFO - Registered dataset 'somerset'
+2025-12-08 20:25:10,268 - api.data_loader - INFO - Registered dataset: burnaby
+2025-12-08 20:25:10,268 - api.server - INFO - Registered dataset 'burnaby'
+2025-12-08 20:25:10,268 - api.data_loader - INFO - Registered dataset: all_vancouver
+2025-12-08 20:25:10,268 - api.server - INFO - Registered dataset 'all_vancouver'
+2025-12-08 20:25:10,268 - api.data_loader - INFO - Registered dataset: vancouver
+2025-12-08 20:25:10,268 - api.server - INFO - Registered dataset 'vancouver'
+2025-12-08 20:25:10,268 - api.server - INFO - Server startup complete
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2025-12-08 20:25:22,254 - api.ch_query - INFO - DEBUG: Raw response keys from server: ['route', 'success']
+INFO:     127.0.0.1:46716 - "GET /route?dataset=somerset&start_lat=51.5&start_lng=-2.5&end_lat=51.6&end_lng=-2.4 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3054]

@@ -19,6 +19,7 @@ class QueryResult:
     path: Optional[List[int]] = None
     geojson: Optional[dict] = None  # Add GeoJSON support
     timing_breakdown: Optional[dict] = None
+    debug: Optional[dict] = None
     error: Optional[str] = None
 
 
@@ -43,7 +44,8 @@ class CHQueryEngine:
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
         
-        self._ensure_dataset_loaded()
+        # REMOVED: Do not auto-load. Let user control it via /load_dataset endpoint.
+        # self._ensure_dataset_loaded()
     
     def _ensure_dataset_loaded(self):
         try:
@@ -83,7 +85,7 @@ class CHQueryEngine:
                 "start_lng": start_lng,
                 "end_lat": end_lat,
                 "end_lng": end_lng,
-                "search_mode": search_mode,
+                "mode": search_mode,
                 "num_candidates": num_candidates,
                 "search_radius": search_radius
             }
@@ -98,16 +100,14 @@ class CHQueryEngine:
             client_side_ms = (t1 - t0) * 1000.0
             
             data = response.json()
+            logger.info(f"DEBUG: Raw response keys from server: {list(data.keys())}")
             # logger.info(f"DEBUG: Raw response from server: {data}")
             
             if not data.get("success", False):
                 return QueryResult(success=False, error=data.get("error", "Unknown server error"))
             
+            # The server structure: {success:true, route: {dataset:..., debug:{...}, route:{distance:..., geojson:...}}}
             route_container = data.get("route", {})
-            # logger.info(f"DEBUG: Route Container: {route_container}")
-            
-            # The server wraps the engine result which wraps the route details
-            # Structure: {success:true, route: {dataset:..., route: {distance:..., geojson:...}}}
             route_details = route_container.get("route", {})
             
             return QueryResult(
@@ -117,7 +117,8 @@ class CHQueryEngine:
                 path=route_details.get("path"),
                 geojson=route_details.get("geojson"),
                 runtime_ms=route_details.get("runtime_ms") or client_side_ms,
-                timing_breakdown=route_container.get("timing_breakdown")
+                timing_breakdown=route_container.get("timing_breakdown"),
+                debug=route_container.get("debug")
             )
         except Exception as e:
             logger.error(f"Routing request failed: {e}")
